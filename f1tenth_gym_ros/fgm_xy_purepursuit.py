@@ -1,28 +1,40 @@
 import numpy as np
-import copy
+from rclpy.node import Node
 import math
 import rclpy
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry
 
-class ReactiveFollowGap:
+class ReactiveFollowGap(Node):
+
     BUBBLE_RADIUS = 2
     PREPROCESS_CONV_SIZE = 5
     BEST_POINT_CONV_SIZE = 80
-    STRAIGHTS_STEERING_ANGLE = np.pi / 12  # 10 degrees
+    STRAIGHTS_STEERING_ANGLE = np.pi / 12  # 15 degrees
     MAX_LIDAR_DIST = 3000000
-    STRAIGHTS_SPEED = 5.0
-    CORNERS_SPEED = 3.0
+    LFD = 1.9
+
+    # 지름길 입구 좌표
+    X_GOAL = 3.840
+    Y_GOAL = -4.696
+
+    # 지름길 구간
+    GLOBAL_MIN_X = 1.508
+    GLOBAL_MAX_X = 4.303
+    GLOBAL_MIN_Y = -6.556
+    GLOBAL_MAX_Y = -4.819
+
+    WEIGT_ANGLE = 2.0 # 클수록 적게 회전
 
     def __init__(self):
-        self.node = rclpy.create_node("reactive_node")
-
-        self.lidar_subscription = self.node.create_subscription(
+        
+        super().__init__('reactive_node')
+        self.lidar_subscription = self.create_subscription(
             LaserScan, '/scan', self.scan_callback, 1)
-        self.odom_subscription = self.node.create_subscription(
+        self.odom_subscription = self.create_subscription(
             Odometry, '/odom', self.odom_callback, 1)
-        self.drive_publisher = self.node.create_publisher(
+        self.drive_publisher = self.create_publisher(
             AckermannDriveStamped, '/drive', 10)
 
         self.ackermann_data = AckermannDriveStamped()
@@ -40,22 +52,21 @@ class ReactiveFollowGap:
         self.current_odom_y = odom_msg.pose.pose.position.y
       
     def scan_callback(self, scan_msg):
-        # print(len(scan_msg.ranges))
+       
         self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges)
         proc_ranges = np.array(scan_msg.ranges[135:-135])
         proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
         proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
+        
 
         left_ranges = scan_msg.ranges[680:761]
-        # left = scan_msg.ranges[720]
         left = sum(left_ranges) / len(left_ranges)
-        # left_front = scan_msg.ranges[620]
+
+        
         right_ranges = scan_msg.ranges[340:421]
-        # right = scan_msg.ranges[380]
         right = sum(right_ranges) / len(right_ranges)
-        # right_front = scan_msg.ranges[460]
+        
         step_ranges = scan_msg.ranges[500:581]
-        # step = scan_msg.ranges[540]
         step = sum(step_ranges) / len(step_ranges)
         
         closest = proc_ranges.argmin()
@@ -72,62 +83,17 @@ class ReactiveFollowGap:
 
         angle = self.get_angle(best, len(proc_ranges)) - (0.15 * (0.4 / left)) + (0.15 * (0.4 / right))
 
-        # angle = self.get_angle(best, len(proc_ranges)) - (0.15 * (0.8 / (left+left_front))) + (0.15 * (0.8 / (right+right_front)))
-
-        xgoal= 3.840
-        ygoal=-4.696
-        a=math.atan((xgoal-self.current_odom_x)/(ygoal-self.current_odom_y))
-        # LFD=1.9
-        LFD=1.9
-        true_angle=math.atan((2*0.25*math.sin(a))/LFD)
         
+        a=math.atan((self.X_GOAL-self.current_odom_x)/(self.Y_GOAL-self.current_odom_y))
+        true_angle=math.atan((2*0.25*math.sin(a))/self.LFD)
         
-        # xgoal1= -0.355
-        # ygoal1=-1.490
-        # b=math.atan((xgoal1-self.current_odom_x)/(ygoal1-self.current_odom_y))
-        # LFD1=20.0
-        # true_angle1=math.atan((2*0.25*math.sin(b))/LFD1)
-
-        
-            # Check if the current position is within the specified range
-        # if 0.508<= self.current_odom_x <=4.303 and -6.556 <= self.current_odom_y <= -4.819:
-        if 1.508<= self.current_odom_x <=4.303 and -6.556 <= self.current_odom_y <= -4.819:
+        if self.GLOBAL_MIN_X <= self.current_odom_x <= self.GLOBAL_MAX_X and self.GLOBAL_MIN_Y <= self.current_odom_y <= self.GLOBAL_MAX_Y:
           velocity=5.0
           angle=true_angle
-          print(true_angle)
 
-         
-            # Check if the current position is within the specified range
-        # elif -3.459<= self.current_odom_x <=-0.884 and -2.604 <= self.current_odom_y <= -1.368:
-        #   velocity=4.0
-        #   angle=true_angle1
-        #   print(true_angle1)
-     
-      #  elif  -5.5<= self.current_odom_x <= 3.8 and 2.2<= self.current_odom_y <= 3.2 :
-      #  
-      #    if step >= 5.0:
-      #        if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-      #            velocity = 4.5
-      #        else:
-      #            velocity = 10.0
-      #    elif 5.0 > step >= 3.5:
-      #        if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-      #            velocity = 4.5
-      #        else:
-      #            velocity = 7.0 * (step / 5.0)
-      #            if velocity > 7.0:
-      #                velocity = 7.0
-      #    elif 3.5 > step >= 0.4:
-      #        if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-      #            velocity = 2.5
-      #        else:
-      #            velocity = 2.5 * (step / 3.5) + 1.5
-      #            if velocity > 3.5:
-      #                velocity = 3.5
         
         else :
-          
-        
+              
           if step >= 8.0:
               if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
                   velocity = 5.0
@@ -183,12 +149,18 @@ class ReactiveFollowGap:
 
     def get_angle(self, range_index, range_len):
         lidar_angle = (range_index - (range_len / 2)) * self.radians_per_elem
-        steering_angle = lidar_angle / 2.0
+        steering_angle = lidar_angle / self.WEIGT_ANGLE
         return steering_angle
+    
+def main(args=None):
 
-if __name__ == '__main__':
-    rclpy.init()
+    rclpy.init(args=args)
     print("FGM Initialized")
     fgm_node = ReactiveFollowGap()
-    rclpy.spin(fgm_node.node)
+    rclpy.spin(fgm_node)
+
+    fgm_node.destroy_node()
     rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

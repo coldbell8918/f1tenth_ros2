@@ -28,6 +28,8 @@ setup(
         'console_scripts': [
             'gym_bridge = f1tenth_gym_ros.gym_bridge:main',
             'cmd_to_ack = f1tenth_gym_ros.cmdvel_to_ackermann:main',
+            'fgm = f1tenth_gym_ros.fgm:main',
+            'fgm_pp = f1tenth_gym_ros.fgm_xy_purepursuit:main',
         ],
     },
 )
