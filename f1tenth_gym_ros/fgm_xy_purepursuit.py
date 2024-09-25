@@ -8,6 +8,7 @@ from nav_msgs.msg import Odometry
 
 class ReactiveFollowGap(Node):
 
+    # Parameter
     BUBBLE_RADIUS = 2
     PREPROCESS_CONV_SIZE = 5
     BEST_POINT_CONV_SIZE = 80
@@ -25,7 +26,9 @@ class ReactiveFollowGap(Node):
     GLOBAL_MIN_Y = -6.556
     GLOBAL_MAX_Y = -4.819
 
-    WEIGT_ANGLE = 2.0 # 클수록 적게 회전
+    # Angle Parameter
+    WEIGT_ANGLE = 2.0 # FGM, 클수록 적게 회전 
+    LFD = 1.9 # PP
 
     def __init__(self):
         
@@ -52,48 +55,44 @@ class ReactiveFollowGap(Node):
         self.current_odom_y = odom_msg.pose.pose.position.y
       
     def scan_callback(self, scan_msg):
-       
-        self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges)
-        proc_ranges = np.array(scan_msg.ranges[135:-135])
-        proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
-        proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
-        
-
-        left_ranges = scan_msg.ranges[680:761]
-        left = sum(left_ranges) / len(left_ranges)
-
-        
-        right_ranges = scan_msg.ranges[340:421]
-        right = sum(right_ranges) / len(right_ranges)
-        
-        step_ranges = scan_msg.ranges[500:581]
-        step = sum(step_ranges) / len(step_ranges)
-        
-        closest = proc_ranges.argmin()
-        min_index = closest - self.BUBBLE_RADIUS
-        max_index = closest + self.BUBBLE_RADIUS
-        if min_index < 0:
-            min_index = 0
-        if max_index >= len(proc_ranges):
-            max_index = len(proc_ranges) - 1
-        proc_ranges[min_index:max_index] = 0
-
-        gap_start, gap_end = self.find_max_gap(proc_ranges)
-        best = self.find_best_point(gap_start, gap_end, proc_ranges)
-
-        angle = self.get_angle(best, len(proc_ranges)) - (0.15 * (0.4 / left)) + (0.15 * (0.4 / right))
-
-        
-        a=math.atan((self.X_GOAL-self.current_odom_x)/(self.Y_GOAL-self.current_odom_y))
-        true_angle=math.atan((2*0.25*math.sin(a))/self.LFD)
-        
+         
         if self.GLOBAL_MIN_X <= self.current_odom_x <= self.GLOBAL_MAX_X and self.GLOBAL_MIN_Y <= self.current_odom_y <= self.GLOBAL_MAX_Y:
+          a=math.atan((self.X_GOAL-self.current_odom_x)/(self.Y_GOAL-self.current_odom_y)) 
+          true_angle=math.atan((2*0.25*math.sin(a))/self.LFD)
           velocity=5.0
           angle=true_angle
 
+        else:
+          
+          self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges) # 2.0 point 사이 각도 radian
+          proc_ranges = np.array(scan_msg.ranges[135:-135]) # 일정 각도 범위 내 Lidar (810,) 형태
+
+          # Lidar 전처리 
+          proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
+          proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
         
-        else :
-              
+          # 왼쪽, 오른쪽, 정면 결정 -> 실제 라이다 scan 개수 확인
+          left_ranges = scan_msg.ranges[680:761]
+          left = sum(left_ranges) / len(left_ranges)
+          right_ranges = scan_msg.ranges[340:421]
+          right = sum(right_ranges) / len(right_ranges)
+          step_ranges = scan_msg.ranges[500:581]
+          step = sum(step_ranges) / len(step_ranges)
+
+          closest = proc_ranges.argmin() # 오른쪽이 제일 가까우면 0, 왼쪽이 제일 가까우면 809
+          min_index = closest - self.BUBBLE_RADIUS
+          max_index = closest + self.BUBBLE_RADIUS
+          if min_index < 0:
+              min_index = 0
+          if max_index >= len(proc_ranges):
+              max_index = len(proc_ranges) - 1
+          proc_ranges[min_index:max_index] = 0
+
+          gap_start, gap_end = self.find_max_gap(proc_ranges)
+          best = self.find_best_point(gap_start, gap_end, proc_ranges) # 제일 적합한 range 값
+          angle = self.get_angle(best, len(proc_ranges)) - (0.15 * (0.4 / left)) + (0.15 * (0.4 / right)) # best에 따라 angle 결정
+
+
           if step >= 8.0:
               if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
                   velocity = 5.0
