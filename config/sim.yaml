@@ -42,7 +42,7 @@ bridge:
     scan_beams: 1080
 
     # map parameters
-    map_path: '/home/park/ros2_ws/src/f1tenth_ros2/maps/levine'
+    map_path: '/home/park/ros2_ws/src/f1tenth_ros2/maps/jeju'
     map_img_ext: '.png'
 
     # opponent parameters
