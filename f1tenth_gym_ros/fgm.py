@@ -11,8 +11,9 @@ class ReactiveFollowGap(Node):
     PREPROCESS_CONV_SIZE = 5
     BEST_POINT_CONV_SIZE = 80
     STRAIGHTS_STEERING_ANGLE = np.pi / 12  # 15 degrees
-    MAX_LIDAR_DIST = 3000000
+    MAX_LIDAR_DIST = 20
     WEIGT_ANGLE = 2.5 # 클 수록 적게 회전
+    RATIO = 1.2
 
     def __init__(self):
 
@@ -20,8 +21,6 @@ class ReactiveFollowGap(Node):
 
         self.lidar_subscription = self.create_subscription(
             LaserScan, '/scan', self.scan_callback, 10)
-        self.odom_subscription = self.create_subscription(
-            Odometry, '/odom', self.odom_callback, 1)
         self.drive_publisher = self.create_publisher(
             AckermannDriveStamped, '/drive', 10)
 
@@ -35,10 +34,24 @@ class ReactiveFollowGap(Node):
         self.current_odom_x = 0.0
         self.current_odom_y = 0.0
 
-    def odom_callback(self, odom_msg):
-        self.current_odom_x = odom_msg.pose.pose.position.x
-        self.current_odom_y = odom_msg.pose.pose.position.y
-      
+    def cluster_consecutive(self,indices, min_length=60):
+        clusters = np.split(indices, np.where(np.diff(indices) != 1)[0] + 1)
+        return [cluster for cluster in clusters if len(cluster) >= min_length]
+    
+    def find_bounds_of_largest_cluster(self, clusters):
+    
+        largest_indices = [(max(cluster), cluster) for cluster in clusters]
+        
+        valid_clusters = [cluster for largest_index, cluster in largest_indices if largest_index <= 800]
+        
+        if valid_clusters:
+            next_largest_cluster = max(valid_clusters, key=lambda cluster: max(cluster))
+            
+            smallest_index = min(next_largest_cluster)
+            largest_index = max(next_largest_cluster)
+            
+            return smallest_index, largest_index
+
     def scan_callback(self, scan_msg):
         
         self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges)
@@ -46,14 +59,12 @@ class ReactiveFollowGap(Node):
         proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
         proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
 
-        left_ranges = scan_msg.ranges[680:761]
-        left = sum(left_ranges) / len(left_ranges)
-        
-        right_ranges = scan_msg.ranges[340:421]
-        right = sum(right_ranges) / len(right_ranges)
-        
-        step_ranges = scan_msg.ranges[500:581]
-        step = sum(step_ranges) / len(step_ranges)
+        filtered_indices = np.where(proc_ranges >= 2.0)[0]
+        clusters = self.cluster_consecutive(filtered_indices)
+
+        left = scan_msg.ranges[720]
+        right = scan_msg.ranges[380]
+        step = scan_msg.ranges[540]
         
         closest = proc_ranges.argmin()
         min_index = closest - self.BUBBLE_RADIUS
@@ -62,43 +73,57 @@ class ReactiveFollowGap(Node):
             min_index = 0
         if max_index >= len(proc_ranges):
             max_index = len(proc_ranges) - 1
+
         proc_ranges[min_index:max_index] = 0
+        
+
 
         gap_start, gap_end = self.find_max_gap(proc_ranges)
         best = self.find_best_point(gap_start, gap_end, proc_ranges)
 
+        if len(clusters)>=2:
+            start, end = self.find_bounds_of_largest_cluster(clusters)
+            best = self.find_best_point(start, end, proc_ranges)
+        print('len: ', len(clusters))
+        print('best point:', best)
         angle = self.get_angle(best, len(proc_ranges)) - (0.5 * (0.4 / left)) + (0.5 * (0.4 / right))
 
-       
+        # velocity = 0.0
+
         if step >= 8.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 2.5
+                velocity = 5.0 * self.RATIO
             else:
-                velocity = 4.5
+                velocity = 9.0 * self.RATIO
         elif 8.0 > step >= 5.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 2.5
+                velocity = 5.0 * self.RATIO
             else:
-                velocity = 3.75 * (step / 8.0)
-                if velocity > 3.75:
-                    velocity = 3.75
+                velocity = 7.5 * (step / 8.0) * self.RATIO
+                if velocity > (7.5 * self.RATIO):
+                    velocity = 7.5 * self.RATIO
         elif 5.0 > step >= 2.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 2.5
+                velocity = 5.0 * self.RATIO
             else:
-                velocity = 3.0 * (step / 2.5)
-                if velocity > 3.0:
-                    velocity = 3.0
+                velocity = 6.0 * (step / 2.5) * self.RATIO
+                if velocity > (6.0 * self.RATIO):
+                    velocity = 6.0 * self.RATIO
         elif 2.0 > step >= 0.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 1.0
+                velocity = 3.0 * self.RATIO
             else:
-                velocity = 1.0 * (step / 1.0) 
-                if velocity > 1.0:
-                    velocity = 1.0
+                velocity = 2.0 * (step / 1.0) 
+                if velocity > (2.0 * self.RATIO):
+                    velocity = 2.0 * self.RATIO
         else:
-            velocity = 2.0
-         
+            velocity = 4.0 * self.RATIO
+        
+        if left > 4.0:
+            velocity = 4.0
+            angle = 0.2
+        
+
         self.ackermann_data.drive.speed = velocity 
         self.ackermann_data.drive.steering_angle = angle
         self.ackermann_data.drive.steering_angle_velocity = 0.0
