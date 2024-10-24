@@ -104,24 +104,20 @@ class ReactiveFollowGap(Node):
                     velocity = 7.5 * self.RATIO
         elif 5.0 > step >= 2.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 5.0 * self.RATIO
+                velocity = 5.0 
             else:
                 velocity = 6.0 * (step / 2.5) * self.RATIO
                 if velocity > (6.0 * self.RATIO):
                     velocity = 6.0 * self.RATIO
         elif 2.0 > step >= 0.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 3.0 * self.RATIO
+                velocity = 3.0 
             else:
                 velocity = 2.0 * (step / 1.0) 
-                if velocity > (2.0 * self.RATIO):
-                    velocity = 2.0 * self.RATIO
+                if velocity > 2.0:
+                    velocity = 2.0 
         else:
             velocity = 4.0 * self.RATIO
-        
-        if left > 4.0:
-            velocity = 4.0
-            angle = 0.2
         
 
         self.ackermann_data.drive.speed = velocity 
