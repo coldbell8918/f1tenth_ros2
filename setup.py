@@ -30,6 +30,7 @@ setup(
             'cmd_to_ack = f1tenth_gym_ros.cmdvel_to_ackermann:main',
             'fgm = f1tenth_gym_ros.fgm:main',
             'fgm_pp = f1tenth_gym_ros.fgm_xy_purepursuit:main',
+            'fgm_speed = f1tenth_gym_ros.fgm_speed:main',
         ],
     },
 )

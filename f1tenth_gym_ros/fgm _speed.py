@@ -59,12 +59,13 @@ class ReactiveFollowGap(Node):
         proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
         proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
 
-        filtered_indices = np.where(proc_ranges >= 2.0)[0] # 2.0
+        filtered_indices = np.where(proc_ranges >= 2.0)[0]
         clusters = self.cluster_consecutive(filtered_indices)
 
         left = scan_msg.ranges[720]
         right = scan_msg.ranges[380]
-        step = scan_msg.ranges[540]
+        # step = scan_msg.ranges[540]
+        step = np.fabs(np.average(scan_msg.ranges[499:580]))
         
         closest = proc_ranges.argmin()
         min_index = closest - self.BUBBLE_RADIUS
@@ -77,52 +78,54 @@ class ReactiveFollowGap(Node):
         proc_ranges[min_index:max_index] = 0
         
 
+
         gap_start, gap_end = self.find_max_gap(proc_ranges)
         best = self.find_best_point(gap_start, gap_end, proc_ranges)
 
         if len(clusters)>=2:
             start, end = self.find_bounds_of_largest_cluster(clusters)
             best = self.find_best_point(start, end, proc_ranges)
-        
         print('len: ', len(clusters))
         print('best point:', best)
         angle = self.get_angle(best, len(proc_ranges)) - (0.5 * (0.4 / left)) + (0.5 * (0.4 / right))
 
         # velocity = 0.0
 
-        if step >= 8.0:
-            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 5.0 * self.RATIO
-            else:
-                velocity = 9.0 * self.RATIO
-        elif 8.0 > step >= 5.0:
-            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 5.0 * self.RATIO
-            else:
-                velocity = 7.5 * (step / 8.0) * self.RATIO
-                if velocity > (7.5 * self.RATIO):
-                    velocity = 7.5 * self.RATIO
-        elif 5.0 > step >= 2.0:
-            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 5.0 
-            else:
-                velocity = 6.0 * (step / 2.5) * self.RATIO
-                if velocity > (6.0 * self.RATIO):
-                    velocity = 6.0 * self.RATIO
-        elif 2.0 > step >= 0.0:
-            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 3.0 
-            else:
-                velocity = 2.0 * (step / 1.0) 
-                if velocity > 2.0:
-                    velocity = 2.0 
-        else:
-            velocity = 4.0 * self.RATIO
+        # if step >= 8.0:
+        #     if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+        #         velocity = 5.0 * self.RATIO
+        #     else:
+        #         velocity = 9.0 * self.RATIO
+        # elif 8.0 > step >= 5.0:
+        #     if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+        #         velocity = 5.0 * self.RATIO
+        #     else:
+        #         velocity = 7.5 * (step / 8.0) * self.RATIO
+        #         if velocity > (7.5 * self.RATIO):
+        #             velocity = 7.5 * self.RATIO
+        # elif 5.0 > step >= 2.0:
+        #     if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+        #         velocity = 5.0 
+        #     else:
+        #         velocity = 6.0 * (step / 2.5) * self.RATIO
+        #         if velocity > (6.0 * self.RATIO):
+        #             velocity = 6.0 * self.RATIO
+        # elif 2.0 > step >= 0.0:
+        #     if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+        #         velocity = 3.0 
+        #     else:
+        #         velocity = 2.0 * (step / 1.0) 
+        #         if velocity > 2.0:
+        #             velocity = 2.0 
+        # else:
+        #     velocity = 4.0 * self.RATIO
 
-        # velocity = np.sqrt(2.0 * 0.523 * 9.81 * np.fabs(step))
-        # if velocity >= 11.0:
-        #     velocity = 11.0
+        velocity = np.sqrt(2 * 0.523 * 9.81 * np.fabs(step))
+        
+        if velocity >= 11:
+            velocity = 11
 
+        
 
         self.ackermann_data.drive.speed = velocity 
         self.ackermann_data.drive.steering_angle = angle
