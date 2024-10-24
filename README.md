@@ -1,6 +1,6 @@
 # F1TENTH with ShortcutFGM 
 ## FGM+SHORTCUT
-https://github.com/user-attachments/assets/4d971cbe-6de6-4c34-97d6-fe6c575f2582
+[fgm_shortcut.webm](https://github.com/user-attachments/assets/bc2fb900-e841-49a7-a6a6-298786c53cbd)
 ### Usage  
 ```
 $ ros2 run f1tenth_gym_ros fgm
