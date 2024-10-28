@@ -1,42 +1,26 @@
 import numpy as np
 from rclpy.node import Node
-import math
 import rclpy
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
-from nav_msgs.msg import Odometry
 
 class ReactiveFollowGap(Node):
 
-    # Parameter
-    BUBBLE_RADIUS = 2
+    BUBBLE_RADIUS = 4
     PREPROCESS_CONV_SIZE = 5
     BEST_POINT_CONV_SIZE = 80
     STRAIGHTS_STEERING_ANGLE = np.pi / 12  # 15 degrees
-    MAX_LIDAR_DIST = 3000000
-    LFD = 1.9
-
-    # 지름길 입구 좌표
-    X_GOAL = 3.840
-    Y_GOAL = -4.696
-
-    # 지름길 구간
-    GLOBAL_MIN_X = 1.508
-    GLOBAL_MAX_X = 4.303
-    GLOBAL_MIN_Y = -6.556
-    GLOBAL_MAX_Y = -4.819
-
-    # Angle Parameter
-    WEIGT_ANGLE = 2.0 # FGM, 클수록 적게 회전 
-    LFD = 1.9 # PP
+    MAX_LIDAR_DIST = 20
+    WEIGT_ANGLE = 2.5 # 클 수록 적게 회전
+    RATIO = 0.8
+    DIST_THRESH = 3.0
 
     def __init__(self):
-        
+
         super().__init__('reactive_node')
+
         self.lidar_subscription = self.create_subscription(
-            LaserScan, '/scan', self.scan_callback, 1)
-        self.odom_subscription = self.create_subscription(
-            Odometry, '/odom', self.odom_callback, 1)
+            LaserScan, '/scan', self.scan_callback, 10)
         self.drive_publisher = self.create_publisher(
             AckermannDriveStamped, '/drive', 10)
 
@@ -50,78 +34,99 @@ class ReactiveFollowGap(Node):
         self.current_odom_x = 0.0
         self.current_odom_y = 0.0
 
-    def odom_callback(self, odom_msg):
-        self.current_odom_x = odom_msg.pose.pose.position.x
-        self.current_odom_y = odom_msg.pose.pose.position.y
-      
-    def scan_callback(self, scan_msg):
-         
-        if self.GLOBAL_MIN_X <= self.current_odom_x <= self.GLOBAL_MAX_X and self.GLOBAL_MIN_Y <= self.current_odom_y <= self.GLOBAL_MAX_Y:
-          a=math.atan((self.X_GOAL-self.current_odom_x)/(self.Y_GOAL-self.current_odom_y)) 
-          true_angle=math.atan((2*0.25*math.sin(a))/self.LFD)
-          velocity=5.0
-          angle=true_angle
-
-        else:
-          
-          self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges) # 2.0 point 사이 각도 radian
-          proc_ranges = np.array(scan_msg.ranges[135:-135]) # 일정 각도 범위 내 Lidar (810,) 형태
-
-          # Lidar 전처리 
-          proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
-          proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
+    def cluster_consecutive(self,indices, min_length=60):
+        clusters = np.split(indices, np.where(np.diff(indices) != 1)[0] + 1)
+        return [cluster for cluster in clusters if len(cluster) >= min_length]
+    
+    def find_bounds_of_largest_cluster(self, clusters,gap_start, gap_end):
+    
+        largest_indices = [(max(cluster), cluster) for cluster in clusters]
         
-          # 왼쪽, 오른쪽, 정면 결정 -> 실제 라이다 scan 개수 확인
-          left_ranges = scan_msg.ranges[680:761]
-          left = sum(left_ranges) / len(left_ranges)
-          right_ranges = scan_msg.ranges[340:421]
-          right = sum(right_ranges) / len(right_ranges)
-          step_ranges = scan_msg.ranges[500:581]
-          step = sum(step_ranges) / len(step_ranges)
+        valid_clusters = [cluster for largest_index, cluster in largest_indices if largest_index <= 800]
+        
+        if valid_clusters:
+            next_largest_cluster = max(valid_clusters, key=lambda cluster: max(cluster))
+            
+            smallest_index = min(next_largest_cluster)
+            largest_index = max(next_largest_cluster)
+            
+            return smallest_index, largest_index
+        else:
+            return gap_start, gap_end
+        
 
-          closest = proc_ranges.argmin() # 오른쪽이 제일 가까우면 0, 왼쪽이 제일 가까우면 809
-          min_index = closest - self.BUBBLE_RADIUS
-          max_index = closest + self.BUBBLE_RADIUS
-          if min_index < 0:
-              min_index = 0
-          if max_index >= len(proc_ranges):
-              max_index = len(proc_ranges) - 1
-          proc_ranges[min_index:max_index] = 0
+    def scan_callback(self, scan_msg):
+        
+        self.radians_per_elem = (1.5 * np.pi) / len(scan_msg.ranges)
+        proc_ranges = np.array(scan_msg.ranges[135:-135])
+        proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
+        proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
 
-          gap_start, gap_end = self.find_max_gap(proc_ranges)
-          best = self.find_best_point(gap_start, gap_end, proc_ranges) # 제일 적합한 range 값
-          angle = self.get_angle(best, len(proc_ranges)) - (0.15 * (0.4 / left)) + (0.15 * (0.4 / right)) # best에 따라 angle 결정
+        filtered_indices = np.where(proc_ranges >= self.DIST_THRESH)[0] # 2.0
+        clusters = self.cluster_consecutive(filtered_indices)
+
+        left = scan_msg.ranges[720]
+        right = scan_msg.ranges[380]
+        step = scan_msg.ranges[540]
+        
+        closest = proc_ranges.argmin()
+        min_index = closest - self.BUBBLE_RADIUS
+        max_index = closest + self.BUBBLE_RADIUS
+        if min_index < 0:
+            min_index = 0
+        if max_index >= len(proc_ranges):
+            max_index = len(proc_ranges) - 1
+
+        proc_ranges[min_index:max_index] = 0
+        
+
+        gap_start, gap_end = self.find_max_gap(proc_ranges)
+        best = self.find_best_point(gap_start, gap_end, proc_ranges)
+
+        if len(clusters)>=1:
+            start, end = self.find_bounds_of_largest_cluster(clusters,gap_start, gap_end)
+            best = self.find_best_point(start, end, proc_ranges)
+        
+        print('len: ', len(clusters))
+        print('best point:', best)
+        angle = self.get_angle(best, len(proc_ranges)) - (0.5 * (0.4 / left)) + (0.5 * (0.4 / right))
+
+        # velocity = 0.0
+
+        if step >= 8.0:
+            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+                velocity = 5.0 * self.RATIO
+            else:
+                velocity = 9.0 * self.RATIO
+        elif 8.0 > step >= 5.0:
+            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+                velocity = 5.0 * self.RATIO
+            else:
+                velocity = 7.5 * (step / 8.0) * self.RATIO
+                if velocity > (7.5 * self.RATIO):
+                    velocity = 7.5 * self.RATIO
+        elif 5.0 > step >= 2.0:
+            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+                velocity = 4.0 
+            else:
+                velocity = 6.0 * (step / 2.5) * self.RATIO
+                if velocity > (6.0 * self.RATIO):
+                    velocity = 6.0 * self.RATIO
+        elif 2.0 > step >= 0.0:
+            if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
+                velocity = 2.0 
+            else:
+                velocity = 1.5 * (step / 1.0) 
+                if velocity > 1.5:
+                    velocity = 1.5 
+        else:
+            velocity = 4.0 * self.RATIO
+
+        # velocity = np.sqrt(2.0 * 0.523 * 9.81 * np.fabs(step))
+        # if velocity >= 11.0:
+        #     velocity = 11.0
 
 
-          if step >= 8.0:
-              if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                  velocity = 5.0
-              else:
-                  velocity = 9.0
-          elif 8.0 > step >= 5.0:
-              if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                  velocity = 5.0
-              else:
-                  velocity = 7.5 * (step / 8.0)
-                  if velocity > 7.5:
-                      velocity = 7.5
-          elif 5.0 > step >= 2.0:
-              if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                  velocity = 5.0
-              else:
-                  velocity = 6.0 * (step / 5.0)
-                  if velocity > 6.0:
-                      velocity = 6.0
-          elif 2.0 > step >= 0.0:
-              if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                  velocity = 2.0
-              else:
-                  velocity = 2.0 * (step / 2.0) 
-                  if velocity > 2.0:
-                      velocity = 2.0
-          else:
-              velocity = 4.0
-         
         self.ackermann_data.drive.speed = velocity 
         self.ackermann_data.drive.steering_angle = angle
         self.ackermann_data.drive.steering_angle_velocity = 0.0
