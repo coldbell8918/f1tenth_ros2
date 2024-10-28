@@ -3,17 +3,17 @@ from rclpy.node import Node
 import rclpy
 from sensor_msgs.msg import LaserScan
 from ackermann_msgs.msg import AckermannDriveStamped
-from nav_msgs.msg import Odometry
 
 class ReactiveFollowGap(Node):
 
-    BUBBLE_RADIUS = 2
+    BUBBLE_RADIUS = 4
     PREPROCESS_CONV_SIZE = 5
     BEST_POINT_CONV_SIZE = 80
     STRAIGHTS_STEERING_ANGLE = np.pi / 12  # 15 degrees
     MAX_LIDAR_DIST = 20
     WEIGT_ANGLE = 2.5 # 클 수록 적게 회전
     RATIO = 1.2
+    DIST_THRESH = 2.5
 
     def __init__(self):
 
@@ -38,7 +38,7 @@ class ReactiveFollowGap(Node):
         clusters = np.split(indices, np.where(np.diff(indices) != 1)[0] + 1)
         return [cluster for cluster in clusters if len(cluster) >= min_length]
     
-    def find_bounds_of_largest_cluster(self, clusters):
+    def find_bounds_of_largest_cluster(self, clusters,gap_start, gap_end):
     
         largest_indices = [(max(cluster), cluster) for cluster in clusters]
         
@@ -51,6 +51,9 @@ class ReactiveFollowGap(Node):
             largest_index = max(next_largest_cluster)
             
             return smallest_index, largest_index
+        else:
+            return gap_start, gap_end
+        
 
     def scan_callback(self, scan_msg):
         
@@ -59,7 +62,7 @@ class ReactiveFollowGap(Node):
         proc_ranges = np.convolve(proc_ranges, np.ones(self.PREPROCESS_CONV_SIZE), 'same') / self.PREPROCESS_CONV_SIZE
         proc_ranges = np.clip(proc_ranges, 0, self.MAX_LIDAR_DIST)
 
-        filtered_indices = np.where(proc_ranges >= 2.0)[0] # 2.0
+        filtered_indices = np.where(proc_ranges >= self.DIST_THRESH)[0] # 2.0
         clusters = self.cluster_consecutive(filtered_indices)
 
         left = scan_msg.ranges[720]
@@ -80,8 +83,8 @@ class ReactiveFollowGap(Node):
         gap_start, gap_end = self.find_max_gap(proc_ranges)
         best = self.find_best_point(gap_start, gap_end, proc_ranges)
 
-        if len(clusters)>=2:
-            start, end = self.find_bounds_of_largest_cluster(clusters)
+        if len(clusters)>=1:
+            start, end = self.find_bounds_of_largest_cluster(clusters,gap_start, gap_end)
             best = self.find_best_point(start, end, proc_ranges)
         
         print('len: ', len(clusters))
@@ -104,18 +107,18 @@ class ReactiveFollowGap(Node):
                     velocity = 7.5 * self.RATIO
         elif 5.0 > step >= 2.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 5.0 
+                velocity = 4.0 
             else:
                 velocity = 6.0 * (step / 2.5) * self.RATIO
                 if velocity > (6.0 * self.RATIO):
                     velocity = 6.0 * self.RATIO
         elif 2.0 > step >= 0.0:
             if abs(angle) > self.STRAIGHTS_STEERING_ANGLE:
-                velocity = 3.0 
+                velocity = 2.0 
             else:
-                velocity = 2.0 * (step / 1.0) 
-                if velocity > 2.0:
-                    velocity = 2.0 
+                velocity = 1.5 * (step / 1.0) 
+                if velocity > 1.5:
+                    velocity = 1.5 
         else:
             velocity = 4.0 * self.RATIO
 
