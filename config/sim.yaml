@@ -42,7 +42,7 @@ bridge:
     scan_beams: 1080
 
     # map parameters
-    map_path: '/home/park/ros2_ws/src/f1tenth_ros2/maps/iccas'
+    map_path: '/home/ros2_ws/src/f1tenth_ros2/maps/iccas'
     map_img_ext: '.png'
 
     # opponent parameters
